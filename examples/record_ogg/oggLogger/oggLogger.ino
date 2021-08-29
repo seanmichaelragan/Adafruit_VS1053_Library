@@ -35,17 +35,19 @@
 #define CARDCS A0     // Card chip select pin
 #define DREQ 3       // VS1053 Data request, ideally an Interrupt pin
 
-#define REC_BUTTON 7
-
 Adafruit_VS1053_FilePlayer musicPlayer = Adafruit_VS1053_FilePlayer(RESET, CS, DCS, DREQ, CARDCS);
 
 File recording;  // the file we will save our recording to
 #define RECBUFFSIZE 128  // 64 or 128 bytes.
 uint8_t recording_buffer[RECBUFFSIZE];
 
+#define START_DELAY 5		// Wait time before recording cycle begins in seconds
+#define RECORDING_LENGTH 30		// Recording length in seconds 
+#define WAIT_TIME 60			// Time between recordings in seconds
+
 void setup() {
   Serial.begin(9600);
-  Serial.println("Adafruit VS1053 Ogg Recording Test");
+  Serial.println("Adafruit VS1053 OggLogger");
 
   // initialise the music player
   if (!musicPlayer.begin()) {
@@ -53,7 +55,7 @@ void setup() {
     while (1);  // don't do anything more
   }
 
-  musicPlayer.sineTest(0x44, 500);    // Make a tone to indicate VS1053 is working
+  // musicPlayer.sineTest(0x44, 500);    // Make a tone to indicate VS1053 is working
  
   if (!SD.begin(CARDCS)) {
     Serial.println("SD failed, or not present");
@@ -64,24 +66,29 @@ void setup() {
   // Set volume for left, right channels. lower numbers == louder volume!
   musicPlayer.setVolume(10,10);
   
-  // when the button is pressed, record!
-  pinMode(REC_BUTTON, INPUT);
-  digitalWrite(REC_BUTTON, HIGH);
-  
-  // load plugin from SD card! We'll use mono 44.1KHz, high quality
-  if (! musicPlayer.prepareRecordOgg("v44k1q05.img")) {
+  // load plugin from SD card! We'll use mono 16KHz.
+  // NOTE: .img filename must be 8 characters or shorter, not counting extension
+  if (! musicPlayer.prepareRecordOgg("v16k1q05.img")) {
      Serial.println("Couldn't load plugin!");
      while (1);    
   }
+  
+  Serial.print("Record cycle length: "); Serial.print(RECORDING_LENGTH); Serial.println(" seconds");
+  Serial.print("Time between recordings: "); Serial.print(WAIT_TIME); Serial.println(" seconds");
+  Serial.print("Record cycle will begin in "); Serial.print(START_DELAY); Serial.println(" seconds..."); 
+  delay(START_DELAY * 1000); // Wait START_DELAY seconds before first recording
 }
 
 uint8_t isRecording = false;
+uint8_t recordNow = true;
+unsigned long previousTime = 0; 
+unsigned long interval = RECORDING_LENGTH*1000;
 
 void loop() {  
-  if (!isRecording && !digitalRead(REC_BUTTON)) {
+  if (!isRecording && recordNow) {
     Serial.println("Begin recording");
     isRecording = true;
-    
+
     // Check if the file exists already
     char filename[15];
     strcpy(filename, "RECORD00.OGG");
@@ -101,9 +108,24 @@ void loop() {
     }
     musicPlayer.startRecordOgg(true); // use microphone (for linein, pass in 'false')
   }
+
+  unsigned long currentTime = millis();
+  
+  if (currentTime - previousTime >= interval) {
+    previousTime = currentTime;
+	  if (recordNow) {
+      recordNow = false;
+	    interval = WAIT_TIME*1000;
+	  } else {
+      recordNow = true;
+	    interval = RECORDING_LENGTH*1000;
+	  }
+  }
+  
   if (isRecording)
     saveRecordedData(isRecording);
-  if (isRecording && digitalRead(REC_BUTTON)) {
+    
+  if (isRecording && !recordNow) {
     Serial.println("End recording");
     musicPlayer.stopRecordOgg();
     isRecording = false;
@@ -111,7 +133,10 @@ void loop() {
     saveRecordedData(isRecording);
     // close it up
     recording.close();
-    delay(1000);
+    if (! musicPlayer.prepareRecordOgg("v16k1q05.img")) {
+      Serial.println("Couldn't load plugin!");
+      while (1);    
+    }
   }
 }
 
